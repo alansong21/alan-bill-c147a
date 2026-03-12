@@ -278,3 +278,67 @@ class TDSConvEncoder(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return self.tds_conv_blocks(inputs)  # (T, N, num_features)
+
+# 3x3 convolutional block with relu and batch norm, pooling over freq dimension is optional 
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, pool_freq: bool = False) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.relu = nn.ReLU()
+        self.batch_norm = nn.BatchNorm2d(out_channels)
+        self.pool_freq = pool_freq
+        if pool_freq:
+            self.pool = nn.MaxPool2d(kernel_size=(2, 1))  # Pool only over freq dimension
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv(x)
+        x = self.relu(x)
+        x = self.batch_norm(x)
+        if self.pool_freq:
+            x = self.pool(x)
+        return x
+    
+# cnn blocks with filter sizes set by cnn_channels, no pooling in last layer
+class CNNEncoder(nn.Module):
+    def __init__(self, in_channels: int, cnn_channels: Sequence[int]) -> None:
+        super().__init__()
+        assert len(cnn_channels) > 0
+        conv_blocks: list[nn.Module] = []
+        for out_channels in cnn_channels[:-1]:
+            conv_blocks.append(ConvBlock(in_channels, out_channels, pool_freq=True))
+            in_channels = out_channels
+        conv_blocks.append(ConvBlock(in_channels, cnn_channels[-1], pool_freq=False))
+        self.conv_blocks = nn.Sequential(*conv_blocks)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is of shape (T, N, num_bands, electrode_channels, frequency_bins)
+        T, N, bands, C, freq = x.shape
+        x = x.reshape(T * N * bands, 1, C, freq)  # Treat each band as a separate channel
+        x = self.conv_blocks(x)
+        _, out_channels, out_C, out_freq = x.shape
+        return x.reshape(T, N, bands * out_channels * out_C * out_freq)
+    
+# gru block with 256 hidden units, bidirectional
+class GRUEncoder(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int = 256,
+        num_layers: int = 1,
+        bidirectional: bool = True,
+    ) -> None:
+        super().__init__()
+        self.gru = nn.GRU(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=bidirectional,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is of shape (T, N, num_features), we want to permute to (N, T, num_features) for GRU
+        x = x.permute(1, 0, 2)
+        output, _ = self.gru(x)
+        # output is of shape (N, T, 512) due to bidirectionality, we can permute back to (T, N, 512)
+        return output.permute(1, 0, 2)
