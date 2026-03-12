@@ -290,21 +290,23 @@ class CNNGRUCTCModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        num_features = self.NUM_BANDS * cnn_channels[-1]
+        assert in_features % self.ELECTRODE_CHANNELS == 0
+        freq_bins = in_features // self.ELECTRODE_CHANNELS
+        pooled_freq = freq_bins
+        for _ in cnn_channels[:-1]:
+            pooled_freq //= 2
+        num_features = cnn_channels[-1] * pooled_freq
 
         # Model
         # inputs: (T, N, bands=2, electrode_channels=16, freq)
         self.model = nn.Sequential(
             # (T, N, bands=2, C=16, freq)
             SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
-            # (T, N, bands=2, cnn_channels[-1])
-            CNNEncoder(
-                in_features=in_features,
-                channels=cnn_channels,
-                num_bands=self.NUM_BANDS,
-            ),
             # (T, N, num_features)
-            nn.Flatten(start_dim=2),
+            CNNEncoder(
+                in_channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS,
+                cnn_channels=cnn_channels,
+            ),
             GRUEncoder(
                 input_size=num_features,
                 hidden_size=gru_hidden_size,
@@ -351,7 +353,7 @@ class CNNGRUCTCModule(pl.LightningModule):
         # such as by striding.
         T_diff = inputs.shape[0] - emissions.shape[0]
         emission_lengths = input_lengths - T_diff
-        
+
         loss = self.ctc_loss(
             log_probs=emissions,  # (T, N, num_classes)
             targets=targets.transpose(0, 1),  # (T, N) -> (N, T)

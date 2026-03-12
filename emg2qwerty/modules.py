@@ -303,6 +303,7 @@ class CNNEncoder(nn.Module):
     def __init__(self, in_channels: int, cnn_channels: Sequence[int]) -> None:
         super().__init__()
         assert len(cnn_channels) > 0
+        self.in_channels = in_channels
         conv_blocks: list[nn.Module] = []
         for out_channels in cnn_channels[:-1]:
             conv_blocks.append(ConvBlock(in_channels, out_channels, pool_freq=True))
@@ -313,10 +314,19 @@ class CNNEncoder(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x is of shape (T, N, num_bands, electrode_channels, frequency_bins)
         T, N, bands, C, freq = x.shape
-        x = x.reshape(T * N * bands, 1, C, freq)  # Treat each band as a separate channel
+
+        # (T, N, bands, C, freq) -> (N, bands*C, freq, T)
+        x = x.permute(1, 2, 3, 4, 0).reshape(N, bands * C, freq, T)
+        assert (
+            x.shape[1] == self.in_channels
+        ), f"Expected {self.in_channels} input channels, got {x.shape[1]}"
+
         x = self.conv_blocks(x)
-        _, out_channels, out_C, out_freq = x.shape
-        return x.reshape(T, N, bands * out_channels * out_C * out_freq)
+
+        # (N, out_channels, pooled_freq, T) -> (T, N, out_channels * pooled_freq)
+        x = x.permute(3, 0, 1, 2)
+        T_out, N_out, out_channels, pooled_freq = x.shape
+        return x.reshape(T_out, N_out, out_channels * pooled_freq)
     
 # gru block with 256 hidden units, bidirectional
 class GRUEncoder(nn.Module):
