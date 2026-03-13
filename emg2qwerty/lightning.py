@@ -284,6 +284,7 @@ class CNNGRUCTCModule(pl.LightningModule):
         in_features: int,
         cnn_channels: Sequence[int],
         gru_hidden_size: int,
+        rnn_num_layers: int,
         optimizer: DictConfig,
         lr_scheduler: DictConfig,
         decoder: DictConfig,
@@ -311,7 +312,7 @@ class CNNGRUCTCModule(pl.LightningModule):
             GRUEncoder(
                 input_size=num_features,
                 hidden_size=gru_hidden_size,
-                num_layers=1,
+                num_layers=rnn_num_layers,
                 bidirectional=True,
             ),
             # (T, N, num_classes)
