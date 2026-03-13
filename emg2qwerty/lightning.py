@@ -579,7 +579,7 @@ class CNNLSTMCTCModule(pl.LightningModule):
         # inputs: (T, N, bands=2, electrode_channels=16, freq)
         self.model = nn.Sequential(
             # (T, N, bands=2, C=16, freq)
-            SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
+            # SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
             # (T, N, num_features)
             CNNEncoder(
                 in_channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS,
