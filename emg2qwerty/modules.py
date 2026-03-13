@@ -423,3 +423,28 @@ class GRUEncoder(nn.Module):
         output, _ = self.gru(x)
         # output is of shape (N, T, 512) due to bidirectionality, we can permute back to (T, N, 512)
         return output.permute(1, 0, 2)
+    
+# biLSTM decode
+class LSTMEncoder(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int = 256,
+        num_layers: int = 1,
+        bidirectional: bool = True,
+    ) -> None:
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=bidirectional,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is of shape (T, N, num_features), we want to permute to (N, T, num_features) for LSTM
+        x = x.permute(1, 0, 2)
+        output, _ = self.lstm(x)
+        # output is of shape (N, T, 512) due to bidirectionality, we can permute back to (T, N, 512)
+        return output.permute(1, 0, 2)
