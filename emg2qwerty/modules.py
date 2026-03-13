@@ -292,8 +292,8 @@ class ConvBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
-        x = self.relu(x)
         x = self.batch_norm(x)
+        x = self.relu(x)
         if self.pool_freq:
             x = self.pool(x)
         return x
@@ -309,6 +309,73 @@ class CNNEncoder(nn.Module):
             conv_blocks.append(ConvBlock(in_channels, out_channels, pool_freq=True))
             in_channels = out_channels
         conv_blocks.append(ConvBlock(in_channels, cnn_channels[-1], pool_freq=False))
+        self.conv_blocks = nn.Sequential(*conv_blocks)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is of shape (T, N, num_bands, electrode_channels, frequency_bins)
+        T, N, bands, C, freq = x.shape
+
+        # (T, N, bands, C, freq) -> (N, bands*C, freq, T)
+        x = x.permute(1, 2, 3, 4, 0).reshape(N, bands * C, freq, T)
+        assert (
+            x.shape[1] == self.in_channels
+        ), f"Expected {self.in_channels} input channels, got {x.shape[1]}"
+
+        x = self.conv_blocks(x)
+
+        # (N, out_channels, pooled_freq, T) -> (T, N, out_channels * pooled_freq)
+        x = x.permute(3, 0, 1, 2)
+        T_out, N_out, out_channels, pooled_freq = x.shape
+        return x.reshape(T_out, N_out, out_channels * pooled_freq)
+    
+# deep conv batchnorm relu block with no pooling
+# two conv layers 
+class DeepConvBNReLUBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.batch_norm = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv(x)
+        x = self.batch_norm(x)
+        x = self.relu(x)
+        x = self.conv(x)
+        x = self.batch_norm(x)
+        x = self.relu(x)
+        return x
+
+# deep conv batchnorm relu block with pooling over freq dimension, two conv layers
+class DeepConvBNReLUPoolBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.batch_norm = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool2d(kernel_size=(2, 1))  # Pool only over freq dimension
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv(x)
+        x = self.batch_norm(x)
+        x = self.relu(x)
+        x = self.conv(x)
+        x = self.batch_norm(x)
+        x = self.relu(x)
+        x = self.pool(x)
+        return x
+    
+# deep CNN encoder with filter size set by cnn_channels, consisting of DeepConvBNReLUPoolBlock with DeepConvBNReLUBlock in last layer with no pooling
+class DeepCNNEncoder(nn.Module):
+    def __init__(self, in_channels: int, cnn_channels: Sequence[int]) -> None:
+        super().__init__()
+        assert len(cnn_channels) > 0
+        self.in_channels = in_channels
+        conv_blocks: list[nn.Module] = []
+        for out_channels in cnn_channels[:-1]:
+            conv_blocks.append(DeepConvBNReLUPoolBlock(in_channels, out_channels))
+            in_channels = out_channels
+        conv_blocks.append(DeepConvBNReLUBlock(in_channels, cnn_channels[-1]))
         self.conv_blocks = nn.Sequential(*conv_blocks)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
