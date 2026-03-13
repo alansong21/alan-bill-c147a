@@ -333,16 +333,18 @@ class CNNEncoder(nn.Module):
 class DeepConvBNReLUBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int) -> None:
         super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.batch_norm = nn.BatchNorm2d(out_channels)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.batch_norm1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.batch_norm2 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv(x)
-        x = self.batch_norm(x)
+        x = self.conv1(x)
+        x = self.batch_norm1(x)
         x = self.relu(x)
-        x = self.conv(x)
-        x = self.batch_norm(x)
+        x = self.conv2(x)
+        x = self.batch_norm2(x)
         x = self.relu(x)
         return x
 
@@ -350,17 +352,19 @@ class DeepConvBNReLUBlock(nn.Module):
 class DeepConvBNReLUPoolBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int) -> None:
         super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.batch_norm = nn.BatchNorm2d(out_channels)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.batch_norm1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.batch_norm2 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool2d(kernel_size=(2, 1))  # Pool only over freq dimension
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv(x)
-        x = self.batch_norm(x)
+        x = self.conv1(x)
+        x = self.batch_norm1(x)
         x = self.relu(x)
-        x = self.conv(x)
-        x = self.batch_norm(x)
+        x = self.conv2(x)
+        x = self.batch_norm2(x)
         x = self.relu(x)
         x = self.pool(x)
         return x

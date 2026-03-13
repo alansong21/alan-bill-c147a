@@ -442,11 +442,6 @@ class DeepCNNGRUCTCModule(pl.LightningModule):
             # (T, N, bands=2, C=16, freq)
             SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
             # (T, N, num_features)
-            MultiBandRotationInvariantMLP(
-                in_features=in_features,
-                mlp_features=[128],
-                num_bands=self.NUM_BANDS,
-            ),
             DeepCNNEncoder(
                 in_channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS,
                 cnn_channels=cnn_channels,
