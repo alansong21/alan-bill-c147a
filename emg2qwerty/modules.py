@@ -516,7 +516,7 @@ class TransformerEncoder(nn.Module):
                    nhead=num_heads,
                    dim_feedforward=hidden_features,
                    dropout=dropout,
-                   activation="silu",
+                   activation="gelu",
                    batch_first=True,
                    norm_first=True,
                )
