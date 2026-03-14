@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 from collections.abc import Sequence
+import math
 
 import torch
 from torch import nn
@@ -448,3 +449,166 @@ class LSTMEncoder(nn.Module):
         output, _ = self.lstm(x)
         # output is of shape (N, T, 512) due to bidirectionality, we can permute back to (T, N, 512)
         return output.permute(1, 0, 2)
+    
+
+
+class SinusoidalPositionEncoding(nn.Module):
+   """Adds fixed sinusoidal positional encodings to an input of shape (N, T, C)."""
+
+
+   def __init__(self, num_features: int, max_length: int = 20000) -> None:
+       super().__init__()
+       self.num_features = num_features
+       self.register_buffer(
+           "encoding",
+           self._build_encoding(max_length, torch.device("cpu")).unsqueeze(0),
+           persistent=False,
+       )
+
+
+   def _build_encoding(
+       self,
+       length: int,
+       device: torch.device,
+   ) -> torch.Tensor:
+       position = torch.arange(length, dtype=torch.float32, device=device).unsqueeze(1)
+       div_term = torch.exp(
+           torch.arange(0, self.num_features, 2, dtype=torch.float32, device=device)
+           * (-math.log(10000.0) / self.num_features)
+       )
+       encoding = torch.zeros(length, self.num_features, dtype=torch.float32, device=device)
+       encoding[:, 0::2] = torch.sin(position * div_term)
+       encoding[:, 1::2] = torch.cos(position * div_term)
+       return encoding
+
+
+   def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+       T = inputs.shape[1]
+       if T > self.encoding.shape[1]:
+           self.encoding = self._build_encoding(T, inputs.device).unsqueeze(0)
+       elif self.encoding.device != inputs.device:
+           self.encoding = self.encoding.to(inputs.device)
+       return inputs + self.encoding[:, :T]
+
+
+class TransformerEncoder(nn.Module):
+   """A vanilla Transformer encoder for (T, N, C) inputs."""
+
+
+   def __init__(
+       self,
+       num_features: int,
+       num_layers: int,
+       num_heads: int,
+       hidden_features: int,
+       dropout: float = 0.1,
+   ) -> None:
+       super().__init__()
+       assert num_layers > 0
+
+
+       self.position_encoding = SinusoidalPositionEncoding(num_features)
+       self.dropout = nn.Dropout(dropout)
+       self.layers = nn.ModuleList(
+           [
+               nn.TransformerEncoderLayer(
+                   d_model=num_features,
+                   nhead=num_heads,
+                   dim_feedforward=hidden_features,
+                   dropout=dropout,
+                   activation="silu",
+                   batch_first=True,
+                   norm_first=True,
+               )
+               for _ in range(num_layers)
+           ]
+       )
+       self.layer_norm = nn.LayerNorm(num_features)
+
+
+   def forward(
+       self,
+       inputs: torch.Tensor,
+       input_lengths: torch.Tensor | None = None,
+   ) -> torch.Tensor:
+       x = inputs.transpose(0, 1)  # (T, N, C) -> (N, T, C)
+
+
+       key_padding_mask = None
+       valid_steps = None
+       if input_lengths is not None:
+           time = torch.arange(x.shape[1], device=x.device)
+           key_padding_mask = time.unsqueeze(0) >= input_lengths.unsqueeze(1)
+           valid_steps = (~key_padding_mask).unsqueeze(-1)
+
+
+       x = self.position_encoding(x)
+       x = self.dropout(x)
+       if valid_steps is not None:
+           x = x.masked_fill(~valid_steps, 0.0)
+
+
+       for layer in self.layers:
+           x = layer(x, src_key_padding_mask=key_padding_mask)
+           if valid_steps is not None:
+               x = x.masked_fill(~valid_steps, 0.0)
+
+
+       x = self.layer_norm(x)
+       if valid_steps is not None:
+           x = x.masked_fill(~valid_steps, 0.0)
+       return x.transpose(0, 1)  # (N, T, C) -> (T, N, C)
+
+class TemporalConvSubsampler(nn.Module):
+   """A stride-based temporal subsampler for (T, N, C) inputs."""
+
+
+   def __init__(
+       self,
+       in_features: int,
+       out_features: int,
+       kernel_width: int = 3,
+       stride: int = 2,
+   ) -> None:
+       super().__init__()
+       assert kernel_width % 2 == 1, "kernel_width must be odd for same padding"
+       assert stride >= 1
+
+
+       self.kernel_width = kernel_width
+       self.stride = stride
+       self.padding = (kernel_width - 1) // 2
+
+
+       self.conv = nn.Conv1d(
+           in_channels=in_features,
+           out_channels=out_features,
+           kernel_size=kernel_width,
+           stride=stride,
+           padding=self.padding,
+       )
+       self.activation = nn.SiLU()
+       self.layer_norm = nn.LayerNorm(out_features)
+
+
+   def forward(
+       self,
+       inputs: torch.Tensor,
+       input_lengths: torch.Tensor | None = None,
+   ) -> tuple[torch.Tensor, torch.Tensor | None]:
+       x = inputs.transpose(0, 1).transpose(1, 2)  # (T, N, C) -> (N, C, T)
+       x = self.conv(x)
+       x = self.activation(x)
+       x = x.transpose(1, 2)  # (N, C, T) -> (N, T, C)
+       x = self.layer_norm(x)
+       x = x.transpose(0, 1)  # (N, T, C) -> (T, N, C)
+
+
+       output_lengths = None
+       if input_lengths is not None:
+           output_lengths = (
+               (input_lengths + 2 * self.padding - self.kernel_width) // self.stride
+           ) + 1
+
+
+       return x, output_lengths
